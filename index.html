@@ -330,7 +330,12 @@
             const greetingTitle = ref('');
             const greetingSubtitle = ref('');
             
+            // 新增：响应式的当前日期，用于隔天后台唤醒时自动刷新 UI 状态
+            const currentDate = ref(getNowStr().date);
+            
             const updateGreeting = () => {
+                currentDate.value = getNowStr().date; // 每次更新问候语时，同步更新今天是什么日子
+                
                 const d = new Date();
                 const hour = d.getHours();
                 const year = d.getFullYear();
@@ -393,12 +398,19 @@
             const workoutHistory = ref([]);
             
             const hasCheckedToday = computed(() => {
-                const today = getNowStr().date;
-                return vitalsHistory.value.some(v => v.date === today);
+                // 使用响应式的 currentDate 替代静态时间，这样隔天唤醒时这里会自动变成 false
+                return vitalsHistory.value.some(v => v.date === currentDate.value);
             });
 
             onMounted(() => {
                 updateGreeting(); // 启动智能问候
+                
+                // 新增核心能力：监听 iOS 切换回前台的唤醒事件
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        updateGreeting(); // 只要从后台切回来，立刻重新对表，刷新问候语和日期！
+                    }
+                });
                 
                 user1RM.value = JSON.parse(localStorage.getItem('pro_1rm_data')) || {};
                 recoveryScore.value = localStorage.getItem('pro_cns_score') || '--';
