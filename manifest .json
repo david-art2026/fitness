@@ -1,0 +1,21 @@
+{
+"name": "硬核监控",
+"short_name": "硬核监控",
+"description": "基于 HRV 与 1RM 的硬核训练管理",
+"start_url": "./index.html",
+"display": "standalone",
+"background_color": "#111827",
+"theme_color": "#111827",
+"icons": [
+{
+"src": "https://placehold.co/192x192/111827/3b82f6?text=1RM",
+"sizes": "192x192",
+"type": "image/png"
+},
+{
+"src": "https://placehold.co/512x512/111827/3b82f6?text=1RM",
+"sizes": "512x512",
+"type": "image/png"
+}
+]
+}

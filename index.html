@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>硬核训练监控 (1RM版)</title>
+    <!-- 新增：PWA 清单与主题色，并设置一个临时的占位图标 -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#111827">
+    <link rel="apple-touch-icon" href="https://placehold.co/192x192/111827/3b82f6?text=1RM">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    
+    <style>
+        body { background-color: #111827; color: #f9fafb; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
+        
+        .slide-fade-enter-active { transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
+        .slide-fade-leave-active { transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); position: absolute; width: 100%; top: 0; left: 0;}
+        .slide-fade-enter-from { opacity: 0; transform: translateX(20px); }
+        .slide-fade-leave-to { opacity: 0; transform: translateX(-20px); }
+        
+        .toast-enter-active, .toast-leave-active { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-20px); }
+
+        .btn-press { transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn-press:active { transform: scale(0.95); }
+        
+        input, select { outline: none; background: transparent; }
+    </style>
+</head>
+<body class="antialiased">
+
+<div id="app" class="min-h-screen relative pb-24 relative w-full max-w-md mx-auto border-x border-gray-800">
+    
+    <!-- 全局轻提示 (Toast) -->
+    <transition name="toast">
+        <div v-if="toast.show" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full shadow-lg backdrop-blur-md font-medium text-sm border" :class="toast.type === 'error' ? 'bg-red-900/80 text-red-100 border-red-700' : 'bg-green-900/80 text-green-100 border-green-700'">
+            {{ toast.msg }}
+        </div>
+    </transition>
+
+    <header class="pt-12 pb-4 px-6 sticky top-0 bg-gray-900/90 backdrop-blur-md z-10">
+        <h1 class="text-2xl font-bold tracking-tight">{{ pageTitle }}</h1>
+        <p class="text-gray-400 text-sm mt-1">基于 HRV 与 1RM 强度的负荷模型</p>
+    </header>
+
+    <div class="px-6 mt-4 relative">
+        <transition name="slide-fade">
+            
+            <div v-if="activeTab === 'recovery'" key="recovery" class="w-full">
+                <!-- 状态指示卡片 -->
+                <div class="bg-gray-800 rounded-3xl p-6 shadow-lg mb-6 border border-gray-700 relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-2 h-full" :class="statusColor"></div>
+                    <h2 class="text-gray-400 text-sm font-medium">中枢神经准备程度 (CNS)</h2>
+                    <div class="mt-2 flex items-baseline gap-2">
+                        <span class="text-4xl font-bold" :class="statusTextColor">{{ recoveryScore }}</span>
+                        <span class="text-gray-500 font-medium">/ 100</span>
+                    </div>
+                    <p class="text-sm mt-3" :class="statusTextColor">{{ statusMessage }}</p>
+                </div>
+
+                <!-- 晨间数据录入 -->
+                <h3 class="font-semibold text-lg mb-3">晨间基线打卡</h3>
+                <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700 space-y-4 mb-6">
+                    <div class="flex justify-between items-center border-b border-gray-700 pb-3">
+                        <span class="text-gray-300">睡眠 HRV (ms)</span>
+                        <input type="number" v-model="hrvInput" placeholder="输入" class="text-right text-white font-mono w-20 bg-gray-700 rounded-lg px-2 py-1">
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">静息心率 (RHR)</span>
+                        <input type="number" v-model="rhrInput" placeholder="输入" class="text-right text-white font-mono w-20 bg-gray-700 rounded-lg px-2 py-1">
+                    </div>
+                    <button @click="calculateRecovery" class="btn-press w-full mt-2 bg-blue-600 text-white font-medium py-3 rounded-xl shadow-md">
+                        同步分析
+                    </button>
+                </div>
+
+                <h3 class="font-semibold text-lg mb-3">力量基准 (1RM 次极量推算)</h3>
+                <p class="text-xs text-gray-500 mb-3 leading-relaxed">利用 10 次以内的次极量重量，推算单次极限重量。作为记录负荷时的强度参考区间。</p>
+                <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700 mb-6">
+                    <select v-model="testExercise" class="w-full bg-gray-700 text-white rounded-xl px-3 py-2 text-sm appearance-none mb-3">
+                        <option v-for="w in workoutDB" :key="w.name" :value="w.name">{{ w.name }}</option>
+                    </select>
+                    
+                    <div class="grid grid-cols-2 gap-3 mb-4">
+                        <div class="bg-gray-900 rounded-xl p-2 border border-gray-700 flex flex-col">
+                            <label class="text-gray-500 text-xs mb-1 text-center">测试重量 (KG)</label>
+                            <input type="number" v-model="testWeight" placeholder="例如 80" class="w-full text-lg font-bold text-white text-center">
+                        </div>
+                        <div class="bg-gray-900 rounded-xl p-2 border border-gray-700 flex flex-col">
+                            <label class="text-gray-500 text-xs mb-1 text-center">完成次数</label>
+                            <input type="number" v-model="testReps" placeholder="1-10次内" class="w-full text-lg font-bold text-white text-center">
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center justify-between mt-2 pt-3 border-t border-gray-700">
+                        <div>
+                            <span class="text-gray-400 text-xs block">预估 1RM</span>
+                            <span class="text-2xl font-bold text-blue-400">{{ calculated1RM > 0 ? calculated1RM : '--' }} <span class="text-sm font-normal">KG</span></span>
+                        </div>
+                        <button @click="save1RM" :disabled="calculated1RM <= 0" class="btn-press bg-gray-700 disabled:bg-gray-800 text-white text-sm font-medium px-4 py-2 rounded-lg border border-gray-600">
+                            保存基准
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-else-if="activeTab === 'workout'" key="workout" class="w-full">
+                <!-- 动作挑选区 -->
+                <div class="bg-gray-800 rounded-2xl p-5 border border-gray-700 mb-4">
+                    <div class="flex justify-between items-end mb-2">
+                        <label class="block text-gray-400 text-sm">选择训练动作</label>
+                        <!-- 显示当前动作的已有基准 -->
+                        <span v-if="user1RM[selectedWorkout.name]" class="text-xs text-blue-400">当前基准: {{ user1RM[selectedWorkout.name] }} KG</span>
+                    </div>
+                    <div class="relative">
+                        <select v-model="selectedWorkout" class="w-full bg-gray-700 text-white rounded-xl px-4 py-3 appearance-none border border-gray-600 mb-4">
+                            <option v-for="w in workoutDB" :key="w.name" :value="w">{{ w.name }} ({{ w.category }})</option>
+                        </select>
+                        <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 mb-4">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-3 mb-4">
+                        <div class="bg-gray-900 rounded-xl p-3 border border-gray-700">
+                            <label class="block text-gray-500 text-xs mb-1">组数</label>
+                            <input type="number" v-model="currentSets" placeholder="组" class="w-full text-lg font-bold text-white text-center">
+                        </div>
+                        <div class="bg-gray-900 rounded-xl p-3 border border-gray-700">
+                            <label class="block text-gray-500 text-xs mb-1">次数</label>
+                            <input type="number" v-model="currentReps" placeholder="次" class="w-full text-lg font-bold text-white text-center">
+                        </div>
+                        <div class="bg-gray-900 rounded-xl p-3 border border-gray-700">
+                            <label class="block text-gray-500 text-xs mb-1">重量(KG)</label>
+                            <input type="number" v-model="currentWeight" placeholder="重" class="w-full text-lg font-bold text-white text-center">
+                        </div>
+                    </div>
+                    <button @click="addExercise" class="btn-press w-full bg-gray-700 text-white text-sm font-bold py-3 rounded-xl border border-gray-600 active:bg-gray-600 transition-colors">
+                        + 加入今日清单
+                    </button>
+                </div>
+
+                <div v-if="currentWorkoutList.length > 0" class="mb-4">
+                    <h3 class="text-sm text-gray-400 mb-2 px-1">今日已练清单 (共 {{ currentWorkoutList.length }} 项)</h3>
+                    <div class="space-y-2">
+                        <div v-for="(item, index) in currentWorkoutList" :key="index" class="bg-gray-800 rounded-xl p-3 border border-gray-700 flex justify-between items-center shadow-sm">
+                            <div>
+                                <p class="font-medium text-sm text-gray-200">{{ item.workout.name }}</p>
+                                <p class="text-xs text-gray-500 mt-0.5">
+                                    {{ item.sets }} 组 × {{ item.reps }} 次 × {{ item.weight }} KG 
+                                    <!-- 核心升级：显示该组的 1RM 强度百分比 -->
+                                    <span v-if="item.intensity" class="text-blue-400 ml-1 font-medium bg-blue-900/30 px-1.5 py-0.5 rounded">
+                                        ({{ item.intensity }}% 1RM)
+                                    </span>
+                                </p>
+                            </div>
+                            <button @click="removeExercise(index)" class="text-red-400 text-xs px-3 py-1.5 bg-red-900/30 rounded-lg border border-red-800 btn-press">删除</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 mb-4 mt-6">
+                    <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                        <label class="block text-gray-400 text-xs mb-2">总时长 (含休息)</label>
+                        <div class="flex items-baseline gap-1 border-b border-gray-700 pb-1">
+                            <input type="number" v-model="workoutDuration" placeholder="60" class="w-full text-2xl font-bold text-white text-center">
+                            <span class="text-gray-500 text-xs">分钟</span>
+                        </div>
+                    </div>
+                    <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700">
+                        <label class="block text-gray-400 text-xs mb-2">全局感受 RPE (1-10)</label>
+                        <div class="flex items-baseline gap-1 border-b border-gray-700 pb-1">
+                            <input type="number" v-model="workoutRpe" placeholder="8" class="w-full text-2xl font-bold text-white text-center">
+                            <span class="text-gray-500 text-xs">分</span>
+                        </div>
+                    </div>
+                </div>
+
+                <button @click="submitWorkoutSession" :disabled="currentWorkoutList.length === 0" class="btn-press w-full bg-blue-600 disabled:bg-gray-700 disabled:text-gray-500 disabled:shadow-none text-white font-bold py-4 rounded-2xl shadow-[0_0_15px_rgba(37,99,235,0.3)] transition-all">
+                    提交今日负荷结算
+                </button>
+            </div>
+
+            <div v-else-if="activeTab === 'heatmap'" key="heatmap" class="w-full">
+                <p class="text-gray-400 text-sm mb-6">基于训练负荷与 48 小时半衰期模型计算。</p>
+                <div class="space-y-4">
+                    <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700 flex items-center justify-between">
+                        <span class="font-medium">股四头肌 / 臀大肌</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-red-400">重度疲劳</span>
+                            <div class="w-4 h-4 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"></div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-800 rounded-2xl p-4 border border-gray-700 flex items-center justify-between">
+                        <span class="font-medium">胸大肌 / 三角肌前束</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-green-400">已完全恢复</span>
+                            <div class="w-4 h-4 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </transition>
+    </div>
+
+    <nav class="fixed bottom-0 left-0 w-full bg-gray-900/90 backdrop-blur-lg border-t border-gray-800 pt-2 px-6 pb-8 z-20">
+        <div class="max-w-md mx-auto flex justify-between items-center relative">
+            <button @click="activeTab = 'recovery'" class="btn-press flex-1 flex flex-col items-center gap-1 transition-colors" :class="activeTab === 'recovery' ? 'text-blue-500' : 'text-gray-500'">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
+                <span class="text-xs font-medium">状态</span>
+            </button>
+            <button @click="activeTab = 'workout'" class="btn-press flex-1 flex flex-col items-center gap-1 transition-colors" :class="activeTab === 'workout' ? 'text-blue-500' : 'text-gray-500'">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"></path></svg>
+                <span class="text-xs font-medium">训练</span>
+            </button>
+            <button @click="activeTab = 'heatmap'" class="btn-press flex-1 flex flex-col items-center gap-1 transition-colors" :class="activeTab === 'heatmap' ? 'text-blue-500' : 'text-gray-500'">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                <span class="text-xs font-medium">热力图</span>
+            </button>
+        </div>
+    </nav>
+</div>
+
+<script>
+    const { createApp, ref, computed, watch } = Vue;
+
+    createApp({
+        setup() {
+            const activeTab = ref('recovery');
+            const pageTitle = computed(() => {
+                if(activeTab.value === 'recovery') return '生理指标与基准';
+                if(activeTab.value === 'workout') return '记录负荷';
+                return '肌肉恢复';
+            });
+
+            // 优雅的 Toast 提示系统 (取代 alert)
+            const toast = ref({ show: false, msg: '', type: 'success' });
+            const showToast = (msg, type = 'success') => {
+                toast.value = { show: true, msg, type };
+                setTimeout(() => toast.value.show = false, 2500);
+            };
+
+            const workoutDB = [
+                { name: '杠铃深蹲', category: '自由杠铃', cnsCost: 1.5 },
+                { name: '传统硬拉', category: '自由杠铃', cnsCost: 1.6 },
+                { name: '杠铃卧推', category: '自由杠铃', cnsCost: 1.2 },
+                { name: '保加利亚单腿蹲', category: '哑铃', cnsCost: 1.3 },
+                { name: '坐姿推胸机', category: '固定器械', cnsCost: 0.9 },
+                { name: '高位下拉', category: '固定器械', cnsCost: 0.9 },
+                { name: '引体向上(自重)', category: '自重', cnsCost: 1.0 },
+                { name: '弹力带面拉', category: '弹力带', cnsCost: 0.5 }
+            ];
+
+            // 核心升级1：程序启动时，先去手机本地仓库里找有没有存过的 1RM 基准，如果没有就给个空壳 {}
+            const user1RM = ref(JSON.parse(localStorage.getItem('hardcore_1rm_data')) || {}); 
+            
+            // 核心升级2：安装一个“监视器”。只要你更新了任何动作的基准，它会瞬间、静默地帮你自动存进手机本地
+            watch(user1RM, (newVal) => {
+                localStorage.setItem('hardcore_1rm_data', JSON.stringify(newVal));
+            }, { deep: true });
+
+            const testExercise = ref(workoutDB[0].name);
+            const testWeight = ref('');
+            const testReps = ref('');
+
+            // Epley & Brzycki 联合算法推算 1RM
+            const calculated1RM = computed(() => {
+                const w = Number(testWeight.value);
+                const r = Number(testReps.value);
+                if (!w || !r || r < 1 || r > 15) return 0; // 超过 15 次推算失真
+                if (r === 1) return w;
+                
+                const epley = w * (1 + r / 30);
+                const brzycki = w * 36 / (37 - r);
+                // 取两种公认算法的平均值，更准确，并四舍五入
+                return Math.round((epley + brzycki) / 2);
+            });
+
+            const save1RM = () => {
+                if (calculated1RM.value > 0) {
+                    user1RM.value[testExercise.value] = calculated1RM.value;
+                    showToast(`${testExercise.value} 基准已更新: ${calculated1RM.value}KG`);
+                    testWeight.value = '';
+                    testReps.value = '';
+                }
+            };
+
+            const hrvInput = ref('');
+            const rhrInput = ref('');
+            
+            // 修复重复声明：读取本地存储状态
+            const recoveryScore = ref(localStorage.getItem('hardcore_cns_score') || '--');
+            const scoreState = ref(localStorage.getItem('hardcore_cns_state') || 'neutral');
+            
+            // 监听变化存入本地
+            watch(recoveryScore, (val) => localStorage.setItem('hardcore_cns_score', val));
+            watch(scoreState, (val) => localStorage.setItem('hardcore_cns_state', val));
+
+            const statusColor = computed(() => {
+                if(scoreState.value === 'good') return 'bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)]';
+                if(scoreState.value === 'warning') return 'bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.6)]';
+                if(scoreState.value === 'danger') return 'bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.6)]';
+                return 'bg-gray-600';
+            });
+            const statusTextColor = computed(() => {
+                if(scoreState.value === 'good') return 'text-green-400';
+                if(scoreState.value === 'warning') return 'text-yellow-400';
+                if(scoreState.value === 'danger') return 'text-red-400';
+                return 'text-white';
+            });
+            const statusMessage = computed(() => {
+                if(scoreState.value === 'good') return '交感神经平稳，适合冲击 1RM 新记录或高容量。';
+                if(scoreState.value === 'warning') return '基线略微下沉，建议降低 20% 训练容量。';
+                if(scoreState.value === 'danger') return '中枢神经高度应激，强烈建议今日主动休息。';
+                return '请输入今日 HRV 与静息心率获取分析。';
+            });
+
+            const calculateRecovery = () => {
+                if(!hrvInput.value || !rhrInput.value) {
+                    showToast('请完整输入 HRV 与静息心率', 'error');
+                    return;
+                }
+                const hrv = Number(hrvInput.value);
+                const rhr = Number(rhrInput.value);
+                if(hrv < 40 || rhr > 70) {
+                    recoveryScore.value = 45; scoreState.value = 'danger';
+                } else if (hrv > 60 && rhr < 60) {
+                    recoveryScore.value = 95; scoreState.value = 'good';
+                } else {
+                    recoveryScore.value = 75; scoreState.value = 'warning';
+                }
+                showToast('生理数据分析完成');
+            };
+
+            const selectedWorkout = ref(workoutDB[0]);
+            const currentWorkoutList = ref([]);
+            const currentSets = ref('');
+            const currentReps = ref('');
+            const currentWeight = ref('');
+            
+            const workoutDuration = ref('');
+            const workoutRpe = ref('');
+
+            const addExercise = () => {
+                if(!currentSets.value || !currentReps.value || !currentWeight.value) {
+                    showToast('请填写完整的组数、次数和重量', 'error');
+                    return;
+                }
+                const weight = Number(currentWeight.value);
+                const exName = selectedWorkout.value.name;
+                
+                // 计算当前组的强度 (%1RM)
+                let intensity = null;
+                if (user1RM.value[exName]) {
+                    intensity = Math.round((weight / user1RM.value[exName]) * 100);
+                }
+
+                currentWorkoutList.value.push({
+                    workout: selectedWorkout.value,
+                    sets: Number(currentSets.value),
+                    reps: Number(currentReps.value),
+                    weight: weight,
+                    intensity: intensity // 将强度存入记录
+                });
+                
+                currentSets.value = ''; currentReps.value = ''; currentWeight.value = '';
+            };
+
+            const removeExercise = (index) => {
+                currentWorkoutList.value.splice(index, 1);
+            };
+
+            const submitWorkoutSession = () => {
+                if(!workoutDuration.value || !workoutRpe.value) {
+                    showToast('请在底部填写总时长和全局 RPE', 'error');
+                    return;
+                }
+                
+                // 独家 sRPE 神经加权负荷计算
+                const totalCns = currentWorkoutList.value.reduce((sum, item) => sum + item.workout.cnsCost, 0);
+                const avgCnsFactor = totalCns / currentWorkoutList.value.length;
+                const totalVolume = currentWorkoutList.value.reduce((sum, item) => sum + (item.sets * item.reps * item.weight), 0);
+                
+                const load = Math.round(Number(workoutDuration.value) * Number(workoutRpe.value) * avgCnsFactor);
+                
+                showToast(`结算成功! 增量神经压力: ${load}, 吨位: ${totalVolume}KG`);
+                
+                setTimeout(() => {
+                    workoutDuration.value = ''; workoutRpe.value = ''; currentWorkoutList.value = [];
+                    activeTab.value = 'recovery'; // 提交完跳回首页看状态
+                }, 1500);
+            };
+
+            return {
+                activeTab, pageTitle, toast, showToast,
+                hrvInput, rhrInput, calculateRecovery, recoveryScore, scoreState, statusColor, statusTextColor, statusMessage,
+                workoutDB, user1RM, testExercise, testWeight, testReps, calculated1RM, save1RM,
+                selectedWorkout, currentWorkoutList, currentSets, currentReps, currentWeight, 
+                addExercise, removeExercise, workoutDuration, workoutRpe, submitWorkoutSession
+            }
+        }
+    }).mount('#app')
+
+    // 新增：注册 Service Worker (PWA 的核心，支持离线运行)
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js').then(registration => {
+                console.log('离线服务加载成功！');
+            }).catch(err => {
+                console.log('离线服务加载失败:', err);
+            });
+        });
+    }
+</script>
+</body>
+</html>
